@@ -1,169 +1,117 @@
 import streamlit as st
 import requests
-import joblib
 import pandas as pd
+from sklearn.ensemble import RandomForestRegressor
 from datetime import datetime
 
-# -------------------------------
-# PAGE SETTINGS
-# -------------------------------
-st.set_page_config(page_title="Air Quality Dashboard", layout="centered")
+# ---------------- PAGE SETTINGS ----------------
+st.set_page_config(page_title="Air Quality Dashboard", page_icon="🌍", layout="wide")
 
-# -------------------------------
-# HERO BANNER (TOP DESIGN)
-# -------------------------------
-st.markdown("""
-<style>
-.hero {
-    background: linear-gradient(90deg, #00c6ff, #0072ff);
-    padding: 35px;
-    border-radius: 15px;
-    text-align: center;
-    color: white;
-    margin-bottom: 20px;
-}
-.hero h1 {
-    margin-bottom: 5px;
-}
-</style>
+# ---------------- TRAIN MODEL (NO model.pkl NEEDED) ----------------
+@st.cache_resource
+def train_model():
+    data = pd.read_csv("data.csv")
+    data = data.dropna()
 
-<div class="hero">
-    <h1>🌍 Smart Air Quality Dashboard</h1>
-    <p>Real-time Pollution Monitoring • Health Alerts • Live Insights</p>
-</div>
-""", unsafe_allow_html=True)
+    X = data[['PM2.5','PM10','NO2','CO']]
+    y = data['AQI']
 
-# -------------------------------
-# DATE & TIME
-# -------------------------------
-st.write("🕒", datetime.now().strftime("%A, %d %B %Y  |  %I:%M %p"))
+    model = RandomForestRegressor()
+    model.fit(X, y)
+    return model
 
-# -------------------------------
-# SAFETY TIP
-# -------------------------------
-st.info("💡 Air Safety Tip: Avoid outdoor exercise when AQI exceeds 200.")
+model = train_model()
 
-# -------------------------------
-# LOAD MODEL
-# -------------------------------
-model = joblib.load("model.pkl")
+# ---------------- OPENWEATHER API ----------------
+API_KEY = "cbffec8159e5d858ca6c988981b74dbb"
 
-# -------------------------------
-# API KEY
-# -------------------------------
-API_KEY = "cbffec8159e5d858ca6c988981b74dbb"   # ← paste your API key
+# ---------------- HEADER ----------------
+st.title("🌍 Smart Air Quality Dashboard")
+st.caption("Real-time Air Pollution Monitoring & Health Insights")
 
-st.markdown("---")
+st.info("🔎 Select a city to view real-time air quality & health recommendations")
 
-# -------------------------------
-# CITY SELECTION
-# -------------------------------
-cities = ["Delhi","Mumbai","Hyderabad","Chennai","Bangalore","Guntur","Kolkata"]
+# ---------------- CITY SELECT ----------------
+cities = ["Delhi","Mumbai","Hyderabad","Chennai","Bangalore","Kolkata","Guntur"]
 city = st.selectbox("Select City", cities)
 
+# ---------------- BUTTON ----------------
 if st.button("Check Air Quality"):
 
-    try:
-        # -------------------------------
-        # GET COORDINATES
-        # -------------------------------
-        geo_url = f"http://api.openweathermap.org/geo/1.0/direct?q={city}&limit=1&appid={API_KEY}"
-        geo_data = requests.get(geo_url).json()
+    # get coordinates
+    geo_url = f"http://api.openweathermap.org/geo/1.0/direct?q={city}&limit=1&appid={API_KEY}"
+    geo_data = requests.get(geo_url).json()
 
-        if len(geo_data) == 0:
-            st.error("City not found")
+    if len(geo_data) == 0:
+        st.error("City not found")
+    else:
+        lat = geo_data[0]['lat']
+        lon = geo_data[0]['lon']
+
+        # fetch pollution data
+        air_url = f"http://api.openweathermap.org/data/2.5/air_pollution?lat={lat}&lon={lon}&appid={API_KEY}"
+        air = requests.get(air_url).json()
+
+        pm25 = air['list'][0]['components']['pm2_5']
+        pm10 = air['list'][0]['components']['pm10']
+        no2 = air['list'][0]['components']['no2']
+        co = air['list'][0]['components']['co']
+
+        # predict AQI
+        prediction = model.predict([[pm25, pm10, no2, co]])
+        aqi = int(prediction[0])
+
+        # emoji indicator
+        if aqi <= 50:
+            emoji = "😊"
+            status = "Good"
+            color = "green"
+        elif aqi <= 100:
+            emoji = "🙂"
+            status = "Moderate"
+            color = "blue"
+        elif aqi <= 200:
+            emoji = "😷"
+            status = "Poor"
+            color = "orange"
         else:
-            lat = geo_data[0]['lat']
-            lon = geo_data[0]['lon']
+            emoji = "⚠️"
+            status = "Very Poor / Hazardous"
+            color = "red"
 
-            # -------------------------------
-            # MAP
-            # -------------------------------
-            st.subheader("📍 Location")
-            st.map(pd.DataFrame({'lat':[lat],'lon':[lon]}))
+        # ---------------- AQI DISPLAY ----------------
+        st.subheader(f"AQI: {aqi} {emoji}")
+        st.markdown(f"### Status: :{color}[{status}]")
 
-            # -------------------------------
-            # AIR POLLUTION DATA
-            # -------------------------------
-            air_url = f"http://api.openweathermap.org/data/2.5/air_pollution?lat={lat}&lon={lon}&appid={API_KEY}"
-            air = requests.get(air_url).json()
+        # ---------------- HEALTH TIP ----------------
+        if aqi > 200:
+            st.error("⚠ Avoid outdoor exercise. Wear a mask.")
+        elif aqi > 100:
+            st.warning("Limit prolonged outdoor activity.")
+        else:
+            st.success("Air quality is safe for outdoor activities.")
 
-            pm25 = air['list'][0]['components']['pm2_5']
-            pm10 = air['list'][0]['components']['pm10']
-            no2 = air['list'][0]['components']['no2']
-            co = air['list'][0]['components']['co']
+        # ---------------- POLLUTION CHART ----------------
+        st.write("### 📊 Pollution Levels")
 
-            # -------------------------------
-            # ML PREDICTION
-            # -------------------------------
-            prediction = model.predict([[pm25, pm10, no2, co]])
-            aqi = int(prediction[0])
+        chart_data = pd.DataFrame({
+            "Pollutant": ["PM2.5", "PM10", "NO2", "CO"],
+            "Level": [pm25, pm10, no2, co]
+        })
 
-            st.markdown("## 🌍 Air Quality Result")
+        st.bar_chart(chart_data.set_index("Pollutant"))
 
-            col1, col2, col3 = st.columns(3)
-            col1.metric("🌫 PM2.5", round(pm25,1))
-            col2.metric("🌫 PM10", round(pm10,1))
-            col3.metric("🌍 AQI", aqi)
+        # ---------------- LOCATION MAP ----------------
+        st.write("### 📍 Location")
+        map_data = pd.DataFrame({'lat':[lat],'lon':[lon]})
+        st.map(map_data)
 
-            # -------------------------------
-            # AQI STATUS
-            # -------------------------------
-            if aqi <= 50:
-                emoji = "😊"
-                st.success("Good Air Quality 😊")
-            elif aqi <= 100:
-                emoji = "🙂"
-                st.info("Moderate 🙂")
-            elif aqi <= 200:
-                emoji = "😷"
-                st.warning("Poor Air Quality 😷")
-            else:
-                emoji = "⚠️"
-                st.error("Very Poor / Hazardous ⚠️")
+        # ---------------- AQI TABLE ----------------
+        st.write("### AQI Categories")
+        st.table({
+            "AQI Range": ["0-50","51-100","101-200","201-300","301+"],
+            "Quality": ["Good","Moderate","Poor","Very Poor","Hazardous"]
+        })
 
-            st.subheader(f"AQI: {aqi} {emoji}")
-
-            # -------------------------------
-            # POLLUTION CHART
-            # -------------------------------
-            st.write("### 📊 Pollution Levels")
-
-            chart_data = pd.DataFrame({
-                "Pollutant": ["PM2.5", "PM10", "NO2", "CO"],
-                "Level": [pm25, pm10, no2, co]
-            })
-
-            st.bar_chart(chart_data.set_index("Pollutant"))
-
-            # -------------------------------
-            # AQI TABLE
-            # -------------------------------
-            st.write("### AQI Categories")
-
-            st.table({
-                "AQI Range": ["0-50","51-100","101-200","201-300","301+"],
-                "Quality": ["Good","Moderate","Poor","Very Poor","Hazardous"]
-            })
-
-            # -------------------------------
-            # HEALTH ADVICE
-            # -------------------------------
-            st.write("### 🩺 Health Advice")
-
-            if aqi > 200:
-                st.warning("⚠ Avoid outdoor activities")
-                st.warning("😷 Wear mask when outside")
-                st.warning("🚫 Keep windows closed")
-            elif aqi > 100:
-                st.info("Sensitive groups should limit outdoor exposure")
-            else:
-                st.success("Air quality is safe for outdoor activities")
-
-            # -------------------------------
-            # LAST UPDATED
-            # -------------------------------
-            st.caption(f"Last updated: {datetime.now().strftime('%H:%M:%S')}")
-
-    except Exception as e:
-        st.error(f"Error: {e}")
+        # ---------------- LAST UPDATED ----------------
+        st.caption(f"Last updated: {datetime.now().strftime('%d %b %Y | %I:%M %p')}")
